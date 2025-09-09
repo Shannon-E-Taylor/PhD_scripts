@@ -1,0 +1,551 @@
+---
+title: "PSM volumes"
+author: "ST"
+date: '2024-11-12'
+output: html_document
+---
+
+```{r}
+library('ggplot2')
+library('data.table')
+library('tidyr')
+library('dplyr')
+library('patchwork')
+
+source('config.R')
+```
+
+
+
+```{r}
+# Read in, and proccess, the data
+volumes <- read.csv('../data/volumes.csv')
+volumes$somite_count <- as.integer(volumes$somite_count)
+
+# Remove data lacking somite count and incorrect species 
+volumes <- volumes[volumes$somite_count > 0 ,]#
+volumes <- volumes[volumes$species %in% c('A. calliptera', 'R. chillingali'), ]
+
+# somite volume 0 means I didn't measure it 
+# (likely because somite is not complete in image)
+volumes[volumes$mean_volume_of_somites == 0, ]$mean_volume_of_somites = NA
+
+# and get rid of mis-annotated data
+to_remove = c('Merian_xx', # doesn't actually have psm - mislabelled 
+              'Rickshaw_1', 'Rickshaw_2') # staging of these is wrong. 
+volumes = volumes[volumes$incomplete != TRUE,]
+volumes = volumes[!volumes$embryo_id %in% c(to_remove), ]
+
+volumes <- assign_class(
+  volumes, 
+  AC_midseg_threshold = AC_midseg_threshold, 
+  RC_midseg_threshold = RC_midseg_threshold, 
+  AC_lateseg_threshold = AC_lateseg_threshold, 
+  RC_lateseg_threshold = RC_lateseg_threshold
+)
+```
+
+
+```{r}
+
+a_guess = 100000
+r_guess = 0
+
+get_exponential_coefficents <- function(df, variable){
+  
+    exponential_model = nls(
+    as.formula(paste(variable, "~ a*exp(r*somite_count)")), 
+    data = df, 
+    start = list(a = a_guess, r = r_guess) 
+  )
+  # extract parameters. 
+  exponential_coef = coef(exponential_model)
+  a = exponential_coef[1]
+  r = exponential_coef[2]
+  
+  return(c(a, r))
+  
+}
+
+out <- get_exponential_coefficents(
+  volumes[volumes$species == 'R. chillingali' & 
+            volumes$class == 'early', ], 
+  variable = 'psm_volume'
+)
+a_RC_early_psm = out[[1]]
+r_RC_early_psm = out[[2]]
+
+out = get_exponential_coefficents(
+  volumes[volumes$species == 'R. chillingali' & 
+            volumes$class != 'early', ], 
+  variable = 'psm_volume'
+)
+a_RC_midlate_psm = out[[1]]
+r_RC_midlate_psm = out[[2]]
+
+
+out = get_exponential_coefficents(
+  volumes[volumes$species == 'A. calliptera' & 
+            volumes$class == 'early', ], 
+  variable = 'psm_volume'
+)
+a_AC_early_psm = out[[1]]
+r_AC_early_psm = out[[2]]
+
+out = get_exponential_coefficents(
+  volumes[volumes$species == 'A. calliptera' & 
+            volumes$class != 'early', ], 
+  variable = 'psm_volume'
+)
+
+
+a_AC_midlate_psm = out[[1]]
+r_AC_midlate_psm = out[[2]]
+
+exp_function <- function(x, a, r) {
+  a * exp(r * x)
+}
+
+psm_vol <- ggplot(volumes, 
+       aes(x = somite_count, y = psm_volume, color = species), 
+       ) + 
+  geom_point(size = 1) + 
+  theme_bw() + 
+  scale_color_manual(values = cichlid_colours) +
+  geom_function(fun = exp_function,
+                args = list(a = a_RC_early_psm, r = r_RC_early_psm),
+                color = cichlid_colours[[2]], 
+                linewidth = 1,
+                xlim = c(5, 16)
+                ) +
+  geom_function(fun = exp_function,
+                args = list(a = a_RC_midlate_psm, r = r_RC_midlate_psm),
+                color = cichlid_colours[[2]], 
+                linewidth = 1,
+                xlim = c(17, 40)) +
+  geom_function(fun = exp_function,
+                args = list(a = a_AC_early_psm, r = r_AC_early_psm),
+                color = cichlid_colours[[1]], 
+                linewidth = 1,
+                xlim = c(5, 16)) +
+  geom_function(fun = exp_function,
+                args = list(a = a_AC_midlate_psm, r = r_AC_midlate_psm),
+                color = cichlid_colours[[1]], 
+                linewidth = 1,
+                xlim = c(17, 32)) +
+  ylab('Unsegmented mesoderm volume (\u00B5m\u00b3)') + 
+  xlab('Somite count') + 
+  ggtitle('Unsegmented mesoderm volume') + 
+  xlim(0, 40)+ 
+  theme(legend.position = 'bottom')
+
+psm_vol
+```
+```{r}
+3141805     /2062667     
+```
+
+
+```{r}
+early_vol <- lm(psm_volume ~ somite_count + species, data = volumes[volumes$class == 'early', ])
+anova(early_vol)
+
+summary(early_vol)
+```
+
+
+
+
+
+```{r}
+# does somite volume differ between species? 
+
+volumes$log_som_vol = log(volumes$mean_volume_of_somites)
+
+lm_comp <- lm(mean_volume_of_somites ~ somite_count + species, data = volumes)
+summary(lm_comp)
+```
+```{r}
+lm_comp <- lm(log_som_vol ~ somite_count + species, data = volumes)
+summary(lm_comp)
+```
+```{r}
+lm_comp <- lm(log_som_vol ~ somite_count + species, data = volumes[volumes$somite_count < 15,])
+summary(lm_comp)
+```
+
+
+```{r}
+out = get_exponential_coefficents(
+  volumes[#volumes$species == 'R. chillingali' & 
+            volumes$class == 'early', ], 
+  variable = 'mean_volume_of_somites'
+)
+
+a_RC_som_early = out[[1]]
+r_RC_som_early = out[[2]]
+
+out = get_exponential_coefficents(
+  volumes[#volumes$species == 'A. calliptera' &
+            volumes$class == 'early', ], 
+  variable = 'mean_volume_of_somites'
+)
+
+a_AC_som_early = out[[1]]
+r_AC_som_early = out[[2]]
+
+out = get_exponential_coefficents(
+  volumes[#volumes$species == 'R. chillingali' & 
+            volumes$class != 'early', ], 
+  variable = 'mean_volume_of_somites'
+)
+
+a_RC_som_midlate = out[[1]]
+r_RC_som_midlate = out[[2]]
+
+out = get_exponential_coefficents(
+  volumes[#volumes$species == 'A. calliptera' &
+            volumes$class != 'early', ], 
+  variable = 'mean_volume_of_somites'
+)
+
+a_AC_som_midlate = out[[1]]
+r_AC_som_midlate = out[[2]]
+
+som_vol <- ggplot(volumes, 
+       aes(x = somite_count, y = mean_volume_of_somites, color = species)) + 
+  geom_point(size = 1) + 
+  theme_bw() + 
+  scale_color_manual(values = cichlid_colours) +
+  geom_function(fun = exp_function, 
+                args = list(a = a_AC_som_early, r = r_AC_som_early), 
+                color = cichlid_colours[[1]],
+                linewidth = 1,
+                xlim = c(5, 15)
+                ) + 
+  geom_function(fun = exp_function, 
+                args = list(a = a_RC_som_early, r = r_RC_som_early), 
+                color = cichlid_colours[[2]],
+                linewidth = 1,
+                xlim = c(5, 15)) + 
+  geom_function(fun = exp_function, 
+                args = list(a = a_AC_som_midlate, r = r_AC_som_midlate), 
+                color = cichlid_colours[[1]],
+                linewidth = 1,
+                xlim = c(16, 30)
+                ) + 
+  geom_function(fun = exp_function, 
+                args = list(a = a_RC_som_midlate, r = r_RC_som_midlate), 
+                color = cichlid_colours[[2]],
+                linewidth = 1,
+                xlim = c(16, 40)) + 
+  ylab('Nascent somite volume (\u00B5m\u00b3)') + 
+  xlab('Somite count') + 
+  xlim(0, 40) + 
+  ylim(0, 250000)+ 
+  ggtitle('Somite volume') + 
+  theme(legend.position = 'bottom')
+
+som_vol
+```
+
+
+
+```{r}
+
+min_stage = 5
+
+
+newdata_AC <- data.frame(somite_count = c(min_stage:32))
+newdata_AC$species = 'A. calliptera'
+newdata_AC$somite_vol_early <- exp_function(
+  newdata_AC$somite_count, a_AC_som_early, r_AC_som_early
+  )
+newdata_AC$somite_vol_midlate <- exp_function(
+  newdata_AC$somite_count, a_AC_som_midlate, r_AC_som_midlate
+  )
+
+
+
+newdata_AC$psm_t0_early = exp_function(
+  c(min_stage:32), a_AC_early_psm, r_AC_early_psm
+)
+newdata_AC$psm_t1_early = exp_function(
+  c((min_stage+1):33), a_AC_early_psm, r_AC_early_psm
+)
+newdata_AC$psm_t0_midlate = exp_function(
+  c(min_stage:32), a_AC_midlate_psm, r_AC_midlate_psm
+)
+newdata_AC$psm_t1_midlate = exp_function(
+  c((min_stage+1):33), a_AC_midlate_psm, r_AC_midlate_psm
+)
+
+
+
+newdata_RC <- data.frame(somite_count = c(min_stage:40))
+newdata_RC$species = 'R. chillingali' 
+newdata_RC$somite_vol_early <- exp_function(
+  newdata_RC$somite_count, a_RC_som_early, r_RC_som_early
+  )
+newdata_RC$somite_vol_midlate <- exp_function(
+  newdata_RC$somite_count, a_RC_som_midlate, r_RC_som_midlate
+  )
+
+
+newdata_RC$psm_t0_early = exp_function(
+  c(min_stage:40), a_RC_early_psm, r_RC_early_psm
+)
+newdata_RC$psm_t1_early = exp_function(
+  c((min_stage+1):41), a_RC_early_psm, r_RC_early_psm
+)
+newdata_RC$psm_t0_midlate = exp_function(
+  c(min_stage:40), a_RC_midlate_psm, r_RC_midlate_psm
+)
+newdata_RC$psm_t1_midlate = exp_function(
+  c((min_stage+1):41), a_RC_midlate_psm, r_RC_midlate_psm
+)
+
+
+newdata <- rbind(newdata_AC, newdata_RC)
+
+newdata$psm_diff_early = newdata$psm_t0_early - newdata$psm_t1_early
+newdata$flux_early = newdata$somite_vol_early - newdata$psm_diff_early  
+
+newdata$psm_diff_midlate = newdata$psm_t0_midlate - newdata$psm_t1_midlate
+newdata$flux_midlate = newdata$somite_vol_midlate - newdata$psm_diff_midlate  
+
+
+ggplot(newdata, aes(x = somite_count, color = species)) + 
+  geom_line(data = newdata[newdata$somite_count <= 16, ], 
+            aes(y = flux_early, 
+                      x = somite_count, color = species), linewidth = 1)   + 
+  geom_line(data = newdata[newdata$somite_count >= 16, ], 
+            aes(y = flux_midlate), 
+            linewidth = 1)   + 
+  theme_bw() + 
+  ylab('Somite-PSM disparity (\u00B5m\u00B3)') + 
+  xlab('Somite count') + 
+  geom_hline(yintercept=0) + 
+    scale_fill_manual(values = cichlid_colours) + 
+  scale_color_manual(values = cichlid_colours) + 
+  ggtitle('Species differ in Somite-PSM disparity')
+```
+
+A. calliptera have somite-psm disparity close to zero, indicating little/no volumetric growth or shrinkage. 
+
+
+R. chillingali have a very negative disparity, indicating that the PSM is decreasing in size faster than the rate expected from somite formation alone. 
+
+
+```{r}
+
+som_vol <- ggplot(volumes, 
+       aes(x = somite_count, y = mean_volume_of_somites, color = species)) + 
+  geom_point(size = 2, shape = 20, stroke=NA, alpha = 1) + 
+  theme_bw() + 
+  scale_color_manual(values = cichlid_colours) +
+  geom_line(data = newdata[newdata$somite_count <= 16, ], 
+            aes(y = somite_vol_early, 
+                      x = somite_count, color = species), linewidth = 1)   + 
+  geom_line(data = newdata[newdata$somite_count >= 16, ], 
+            aes(y = somite_vol_midlate), 
+            linewidth = 1)   + 
+  ylab('Nascent somite volume (\u00B5m\u00b3)') + 
+  xlab('Somite count') + 
+  xlim(0, 40) + 
+  ylim(0, 250000)+ 
+  ggtitle('Somite volume') + 
+  theme(legend.position = 'bottom')
+
+```
+
+```{r}
+disp <- ggplot(newdata, aes(x = somite_count, color = species)) + 
+  geom_line(data = newdata[newdata$somite_count <= 16, ], 
+            aes(y = flux_early/somite_vol_early, 
+                      x = somite_count, color = species), linewidth = 1)   + 
+  geom_line(data = newdata[newdata$somite_count >= 16, ], 
+            aes(y = flux_midlate/somite_vol_midlate), 
+            linewidth = 1)   + 
+  theme_bw() + 
+  ylab('Somite-PSM disparity \n(fold somite volume)') + 
+  xlab('Somite count') + 
+  geom_hline(yintercept=0) + 
+    scale_fill_manual(values = cichlid_colours) + 
+  scale_color_manual(values = cichlid_colours) + 
+  ggtitle('Somite-PSM disparity') + 
+  theme(legend.position = 'bottom') + 
+  ylim(-2, 2)
+
+
+
+psm_vol <- ggplot(volumes, 
+       aes(x = somite_count, y = psm_volume, color = species), 
+       ) + 
+  geom_point(size = 2, shape = 20, stroke=NA, alpha = 1) + 
+  theme_bw() + 
+  scale_color_manual(values = cichlid_colours) +
+  geom_line(data = newdata[newdata$somite_count <= 16, ], 
+            aes(y = psm_t0_early, 
+                      x = somite_count, color = species), linewidth = 1)   + 
+  geom_line(data = newdata[newdata$somite_count >= 16, ], 
+            aes(y = psm_t0_midlate), 
+            linewidth = 1)   + 
+  ylab('Unsegmented mesoderm \nvolume (\u00B5m\u00b3)') + 
+  xlab('Somite count') + 
+  ggtitle('Unsegmented mesoderm volume') + 
+  xlim(0, 40)+ 
+  theme(legend.position = 'bottom')
+
+```
+
+```{r}
+library(patchwork)
+
+psm_vol + som_vol + disp + 
+  plot_layout(guides = 'collect') & theme(legend.position = 'bottom')
+
+ggsave('../graphs/somite_and_psm_volume.png', 
+       width = 12, height = 3, 
+       dpi = 600
+       )
+```
+```{r}
+volumes[volumes$species == 'R. chillingali' & volumes$somite_count > 15 & volumes$somite_count < 25, ]
+```
+
+
+```{r}
+# for berta 
+
+data = read.csv('../data/all_overviews.csv')
+
+# Extract lengths
+lengths <- data[data$Text %in% c(
+  'embryo_length', 'PSM_length', 'PSM_width', 'somite_length',
+  'species', 'somite_stage', 
+  'somite_width', 'paraxial-mesoderm', 'head', 'hw'),
+  c('image_id', 'Text', 'length', 'species', 'somite_count')]
+
+overview_measurements <- pivot_wider(lengths, 
+                                     names_from = 'Text', 
+                                     values_from = 'length', values_fn = mean)
+
+
+overview_measurements$species <- factor(overview_measurements$species, 
+                                        levels = c('A. calliptera', 'R. chillingali', 'M. zebra'))
+
+
+overview_measurements <- overview_measurements[overview_measurements$species %in% c('A. calliptera', 'R. chillingali'), ]
+
+overview_measurements <- overview_measurements[overview_measurements$somite_count > 0, ]
+
+
+
+# Read in, and proccess, the data
+cell_counts <- read.csv('../data/cell_numbers.csv')
+cell_counts$somite_count <- as.integer(cell_counts$somite_count)
+
+# Remove data lacking somite count and incorrect species 
+cell_counts <- cell_counts[cell_counts$somite_count > 0 ,]#
+cell_counts <- cell_counts[cell_counts$species %in% c('A. calliptera', 'R. chillingali'), ]
+
+
+
+mean_chilli_vol = mean(volumes[volumes['somite_count'] < 15 & volumes['species'] == 'R. chillingali', ]$psm_volume, na.rm = TRUE)
+mean_calli_vol = mean(volumes[volumes['somite_count'] < 15 & volumes['species'] == 'A. calliptera', ]$psm_volume, na.rm = TRUE)
+
+mean_chilli_EL = mean(overview_measurements[overview_measurements['somite_count'] < 15 & overview_measurements['species'] == 'R. chillingali', ]$embryo_length, na.rm = TRUE)
+mean_calli_EL = mean(overview_measurements[overview_measurements['somite_count'] < 15 & overview_measurements['species'] == 'A. calliptera', ]$embryo_length, na.rm = TRUE)
+
+mean_chilli_psm = mean(overview_measurements[overview_measurements['somite_count'] < 15 & overview_measurements['species'] == 'R. chillingali', ]$PSM_length, na.rm = TRUE)
+mean_calli_psm = mean(overview_measurements[overview_measurements['somite_count'] < 15 & overview_measurements['species'] == 'A. calliptera', ]$PSM_length, na.rm = TRUE)
+
+
+
+mean_chilli_count = mean(cell_counts[cell_counts$somite_count < 15 & cell_counts$species == 'R. chillingali', ]$cells_in_psm, na.rm = TRUE)
+mean_calli_count = mean(cell_counts[cell_counts$somite_count < 15 & cell_counts$species == 'A. calliptera', ]$cells_in_psm, na.rm = TRUE)
+
+
+
+plt_params <- list(
+  scale_color_manual(values = cichlid_colours), 
+  scale_fill_manual(values = cichlid_colours), 
+  theme_bw(),
+  theme(legend.position = 'bottom'), 
+  scale_x_discrete(labels=c("AC","RC"))
+)
+
+
+pos_const = 10
+
+vol <- ggplot(volumes[volumes$somite_count < 15, ], 
+  aes(x = species, y = psm_volume, color = species, fill= species)) + 
+  geom_boxplot(alpha = 0.3, outliers = FALSE) + geom_jitter(width = 0.1, height = 0, size = 1) + 
+  plt_params + 
+    stat_summary(fun.y=mean, geom="point", fill = 'red', color = 'red', shape = 3) + 
+  annotate("text", x = 1.5, y = 9e6/pos_const, size = 3, 
+           label = eval(paste(c(round(mean_chilli_vol / mean_calli_vol, 2)), 'fold\nchange'))) + 
+  ylab('PSM volume (\u00B5m\u00b3)') +
+  scale_y_continuous(labels = scales::scientific, limits = c(0, 9e6)) + 
+  ggtitle('PSM volume')
+
+  
+cells <- ggplot(cell_counts[cell_counts$somite_count < 15, ], 
+                  aes(x = species, y = cells_in_psm, color = species, fill= species)) + 
+  geom_boxplot(alpha = 0.3, outliers = FALSE) + geom_jitter(width = 0.1, height = 0, size = 1) + 
+  plt_params + 
+  stat_summary(fun.y=mean, geom="point", fill = 'red', color = 'red', shape = 3) + 
+  annotate("text", x = 1.5, y = 10000/pos_const, size = 3, 
+           label = eval(paste(c(round(mean_chilli_count / mean_calli_count, 2)), 'fold\nchange'))) + 
+  ylab('PSM cell count') + 
+  ylim(0, 10000) + 
+  ggtitle('PSM cell count')
+
+
+EL <- ggplot(overview_measurements[overview_measurements$somite_count < 15, ], 
+                  aes(x = species, y = embryo_length, color = species, fill= species)) + 
+  geom_boxplot(alpha = 0.3, outliers = FALSE) + geom_jitter(width = 0.3, height = 0, size = 1) + 
+  plt_params + 
+  stat_summary(fun.y=mean, geom="point", fill = 'red', color = 'red', shape = 3) + 
+  annotate("text", x = 1.5, y = 2600/pos_const, size = 3,
+           label = eval(paste(c(round(mean_chilli_EL / mean_calli_EL, 2)), 'fold\nchange'))) +
+  ylab('Embryo length (\u00B5m)') + 
+  ylim(0, 2600) + 
+  ggtitle('Embryo length')
+
+
+
+
+psm <- ggplot(overview_measurements[overview_measurements$somite_count < 15, ], 
+                  aes(x = species, y = PSM_length, color = species, fill= species)) + 
+  geom_boxplot(alpha = 0.3, outliers = FALSE) + geom_jitter(width = 0.3, height = 0, size = 1) + 
+  plt_params + 
+  stat_summary(fun.y=mean, geom="point", fill = 'red', color = 'red', shape = 3) + 
+  annotate("text", x = 1.5, y = 900/pos_const, size = 3,
+           label = eval(paste(c(round(mean_chilli_psm / mean_calli_psm, 2)), 'fold\nchange'))) +
+  ylab('PSM length (\u00B5m)') +
+  ylim(0, 900) + 
+  ggtitle('PSM length')
+
+library('ggpubr')
+
+EL + psm + vol + cells + 
+  plot_layout(guides = 'collect', nrow = 1) & 
+  theme(legend.position = 'right') # & 
+  # stat_compare_means(
+  #   aes(label = paste0(..method.., "\n", "p =", ..p.format..)), 
+  #   method = "t.test")
+
+ggsave('../berta_graphs/initial_conditions.svg', width = 10, height = 4, dpi= 600)
+
+```
+
+```{r}
+psm_vol + ggtitle('PSM volume') + ylab('PSM volume (\u00B5m\u00b3)') + som_vol + ggtitle('Nascent somite volume') + ylab('Somite volume (\u00B5m\u00b3)')   + 
+  plot_layout(guides = 'collect', nrow = 1) & 
+  theme(legend.position = 'bottom')
+
+ggsave('../berta_graphs/PSM_volume.svg', width = 6, height = 3, dpi = 600)
+```
+
